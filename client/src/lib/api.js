@@ -1,63 +1,62 @@
-function authHeader() {
-  const t = localStorage.getItem('ppw_token');
-  return t ? { Authorization: `Bearer ${t}` } : {};
+// client/src/lib/api.js
+function getToken() {
+  return localStorage.getItem('ppw_token') || '';
+}
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  const tok = getToken();
+  if (tok) h['Authorization'] = `Bearer ${tok}`;
+  return h;
+}
+async function j(res) {
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch {}
+  if (!res.ok) {
+    const err = new Error((data && data.error) || res.statusText || 'Request failed');
+    err.status = res.status; err.data = data; throw err;
+  }
+  return data;
 }
 
 const API = {
-  async authStatus() {
-    const r = await fetch('/api/auth/status', { headers: authHeader(), cache: 'no-store' });
-    return r.json();
-  },
+  // AUTH
+  async authStatus() { return j(await fetch('/api/auth/status', { headers: authHeaders() })); },
   async authSetup(username, password) {
-    const r = await fetch('/api/auth/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    return j(await fetch('/api/auth/setup', {
+      method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ username, password })
-    });
-    return r.json();
+    }));
   },
   async login(username, password) {
-    const r = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    return j(await fetch('/api/auth/login', {
+      method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ username, password })
-    });
-    return r.json();
+    }));
   },
 
-  async getConfig() {
-    const res = await fetch('/api/config', { cache: 'no-store' });
-    return res.json();
-  },
+  // CONFIG
+  async getConfig() { return j(await fetch('/api/config', { headers: authHeaders() })); },
   async saveConfig(cfg) {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
+    return j(await fetch('/api/config', {
+      method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(cfg)
-    });
-    if (!res.ok) throw new Error('Not authorized');
-    return res.json();
+    }));
   },
-  async getLibraries() {
-    const res = await fetch('/api/plex/libraries', { headers: authHeader(), cache: 'no-store' });
-    if (!res.ok) throw new Error('Not authorized');
-    return res.json();
-  },
-  async getLatest(limit) {
-    const res = await fetch(`/api/latest${limit ? `?limit=${limit}` : ''}`, { cache: 'no-store' });
-    return res.json();
-  },
-  async getNowPlaying() {
-    const res = await fetch('/api/now-playing', { cache: 'no-store' });
-    return res.json();
-  },
-  ws(onOpen, token) {
+
+  // PLEX
+  async getLibraries() { return j(await fetch('/api/plex/libraries', { headers: authHeaders() })); },
+  async getLatest(limit) { return j(await fetch(`/api/latest${limit ? `?limit=${limit}` : ''}`)); },
+  async getNowPlaying() { return j(await fetch('/api/now-playing')); }
+  ,
+  async getTmdb(ratingKey) { return j(await fetch(`/api/tmdb/${encodeURIComponent(ratingKey)}`)); },
+
+  // WS
+  ws(connectCb) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = new URL(`${proto}://${location.host}/ws`);
-    if (token) url.searchParams.set('token', token);
-    const ws = new WebSocket(url.toString());
-    ws.onopen = () => onOpen?.(ws);
+    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => connectCb?.(ws);
     return ws;
-  }
+  },
 };
 export default API;

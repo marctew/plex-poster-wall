@@ -2,25 +2,25 @@
 node_modules/
 client/node_modules/
 server/node_modules/
+*.log
 npm-debug.log*
-yarn-error.log*
 pnpm-debug.log*
-.vite/
-client/.vite*/
+yarn-error.log*
+
+# Vite/Build artifacts
+dist/
 client/dist/
-client/build/
+client/.vite/
+client/.vite-temp/
 server/.cache/
 
 # Env & secrets
 .env
-.env.*
+server/.env
+client/.env
+
+# Local DB & generated files
 server/config.db
-
-# OS crap
+*.sqlite
+*.sqlite3
 .DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
-.idea/
-*.swp

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import BadgesRow, { useTmdb } from './Badges.jsx';
 
 function ProgressBar({ progress = 0, widthClass = 'w-[80vw]' }) {
   return (
@@ -8,95 +9,79 @@ function ProgressBar({ progress = 0, widthClass = 'w-[80vw]' }) {
     </div>
   );
 }
-
-function formatTitle(s) {
+function fmtTitle(s) {
   if (s?.type === 'episode' && s?.series) {
-    const sec = s.seasonNumber != null ? String(s.seasonNumber).padStart(2, '0') : '??';
-    const ep  = s.episodeNumber != null ? String(s.episodeNumber).padStart(2, '0') : '??';
-    return `${s.series} · S${sec}E${ep} · ${s.episodeTitle || s.title}`;
+    const S = s.seasonNumber != null ? String(s.seasonNumber).padStart(2, '0') : '??';
+    const E = s.episodeNumber != null ? String(s.episodeNumber).padStart(2, '0') : '??';
+    return `${s.series} · S${S}E${E} · ${s.episodeTitle || s.title}`;
   }
   return s?.title || 'Untitled';
 }
 
-function tmdbRating(s) {
-  const isTMDb = (img) => typeof img === 'string' && img.toLowerCase().includes('themoviedb');
-  if (isTMDb(s?.ratingImage) && s?.rating != null) return s.rating;
-  if (isTMDb(s?.grandparentRatingImage) && s?.grandparentRating != null) return s.grandparentRating;
-  return null;
-}
-
 export default function NowPlaying({ session, cfg }) {
+  const [pct, setPct] = useState(0);
+  const raf = useRef(null);
+  const tmdb = useTmdb(session?.ratingKey);
+
+  useEffect(() => {
+    if (!session?.duration) return setPct(0);
+    const base = Number(session.progress || 0);
+    const dur  = Number(session.duration);
+    const startTs = Number(session.ts || Date.now());
+
+    function tick() {
+      const now = Date.now();
+      const delta = Math.max(0, now - startTs);
+      const playMs = session.state === 'playing' ? base + delta : base;
+      const p = Math.min(100, (100 * playMs) / dur);
+      setPct(p);
+      raf.current = requestAnimationFrame(tick);
+    }
+    tick();
+    return () => { if (raf.current) cancelAnimationFrame(raf.current); };
+  }, [session?.ratingKey, session?.progress, session?.duration, session?.state, session?.ts]);
+
   if (!session) return null;
-  const pct = session.duration ? (100 * (session.progress || 0) / session.duration) : 0;
+
   const posterH = (cfg?.poster_height_vh ?? 78) + 'vh';
   const blurPx = cfg?.backdrop_blur_px ?? 12;
   const backOpacity = cfg?.backdrop_opacity ?? 0.35;
-
-  const baseRem = 1.75;
+  const baseRem = cfg?.title_size === 'lg' ? 2.0 : cfg?.title_size === 'sm' ? 1.375 : 1.75;
   const titleSize = `${baseRem * (cfg?.title_scale ?? 1)}rem`;
   const synopsisSize = `${0.95 * (cfg?.synopsis_scale ?? 1)}rem`;
-
-  const rating = cfg?.show_tmdb_badge ? tmdbRating(session) : null;
-  const summary = session?.summary || session?.grandparentSummary || session?.parentSummary || '';
 
   return (
     <div className="fixed inset-0">
       <AnimatePresence mode="wait">
         {session.artUrl && (
-          <motion.img
-            key={session.ratingKey + '-art'}
-            src={session.artUrl}
-            alt="backdrop"
+          <motion.img key={session.ratingKey + '-art'} src={session.artUrl} alt=""
             className="absolute inset-0 w-full h-full object-cover"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: backOpacity }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.7 }}
-            style={{ filter: `blur(${blurPx}px)` }}
-          />
+            initial={{ opacity: 0 }} animate={{ opacity: backOpacity }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.7 }} style={{ filter: `blur(${blurPx}px)` }} />
         )}
       </AnimatePresence>
 
       <div className="relative z-10 h-full w-full flex flex-col items-center justify-center p-4">
         {session.thumbUrl && (
-          <img
-            src={session.thumbUrl}
-            alt={session.title}
-            className="rounded-2xl poster-shadow object-contain"
-            style={{ height: posterH, aspectRatio: '2/3' }}
-          />
+          <img src={session.thumbUrl} alt="" className="rounded-2xl poster-shadow object-contain"
+               style={{ height: posterH, aspectRatio: '2/3' }} />
         )}
 
         <div className="mt-5 text-center max-w-[92vw]">
           <div className="text-xs uppercase tracking-widest text-neon mb-1">Now Playing</div>
-          <div className="font-bold glow leading-tight px-4 flex items-center justify-center gap-2" style={{ fontSize: titleSize }}>
-            {formatTitle(session)}
-            {rating != null && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-700/60 text-xs" title="TMDb user score">
-                <svg width="18" height="18" viewBox="0 0 24 24" className="shrink-0" aria-hidden="true">
-                  <rect x="1" y="1" width="22" height="22" rx="4" fill="#01d277"></rect>
-                  <text x="12" y="16" textAnchor="middle" fontSize="10" fill="#001a0f" fontFamily="sans-serif">TMDB</text>
-                </svg>
-                <span>{Number(rating).toFixed(1)}</span>
-              </span>
-            )}
+          <div className="font-bold glow leading-tight px-4" style={{ fontSize: titleSize }}>
+            {fmtTitle(session)}
           </div>
           {session.year && <div className="text-slate-300/80 mt-1">{session.year}</div>}
-
-          {cfg?.show_synopsis ? (
-            <div
-              className="mt-3 text-slate-200/90 mx-auto"
-              style={{
-                fontSize: synopsisSize,
-                display: '-webkit-box',
-                WebkitLineClamp: String(cfg?.synopsis_max_lines ?? 6),
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden'
-              }}
-            >
-              {summary || '—'}
+          {cfg?.show_synopsis && (
+            <div className="mt-3 text-slate-200/90 mx-auto"
+                 style={{ fontSize: synopsisSize, display: '-webkit-box',
+                          WebkitLineClamp: String(cfg?.synopsis_max_lines ?? 6),
+                          WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              {session.summary || '—'}
             </div>
-          ) : null}
+          )}
+          <BadgesRow tmdb={tmdb} />
         </div>
 
         <div className="mt-5 flex flex-col items-center gap-1">
