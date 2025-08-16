@@ -1,81 +1,149 @@
-// server/src/tmdb.js
 import fetch from 'node-fetch';
 import { XMLParser } from 'fast-xml-parser';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+const cache = new Map(); // ratingKey -> result
 
-// teeny in-memory cache
-const TTL = 6 * 60 * 60 * 1000; // 6 hours
-const cache = new Map();
-const getCache = (k) => {
-  const hit = cache.get(k);
-  if (!hit) return null;
-  if (Date.now() > hit.exp) { cache.delete(k); return null; }
-  return hit.v;
-};
-const setCache = (k, v) => cache.set(k, { v, exp: Date.now() + TTL });
-
-async function fetchPlexMeta(baseUrl, token, ratingKey, includeGuids = true) {
-  const url = new URL(`/library/metadata/${ratingKey}`, baseUrl);
-  if (includeGuids) url.searchParams.set('includeGuids', '1');
+async function plexFetch({ baseUrl, token, path, params = {} }) {
+  const url = new URL(path, baseUrl);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   url.searchParams.set('X-Plex-Token', token);
-  const res = await fetch(url, { headers: { Accept: 'application/xml' } });
-  if (!res.ok) throw new Error(`Plex meta ${res.status}`);
-  const xml = await res.text();
-  const mc = parser.parse(xml)?.MediaContainer;
-  const m = mc?.Metadata;
-  return Array.isArray(m) ? m[0] : m || null;
+  const res = await fetch(url, {
+    headers: {
+      'Accept': 'application/json, text/xml;q=0.9, application/xml;q=0.8',
+      'X-Plex-Product': 'PlexPosterWall',
+      'X-Plex-Client-Identifier': 'plex-poster-wall',
+    }
+  });
+  if (!res.ok) throw new Error(`Plex ${res.status}`);
+  const ct = res.headers.get('content-type') || '';
+  const text = await res.text();
+  if (ct.includes('application/json')) return JSON.parse(text);
+  return parser.parse(text);
 }
 
-function extractTmdb(meta) {
-  if (!meta) return null;
-  const type = meta.type;
-  const guids = Array.isArray(meta.Guid) ? meta.Guid : meta.Guid ? [meta.Guid] : [];
-  const tmdb = guids.find(g => String(g.id || '').startsWith('tmdb://'));
-  if (!tmdb) return null;
-  const id = String(tmdb.id).replace('tmdb://', '');
-  const tmdbType = type === 'movie' ? 'movie' : 'tv';
-  return { id, tmdbType };
+async function tmdbFetch(path, apiKey, params = {}) {
+  const url = new URL(`https://api.themoviedb.org/3${path}`);
+  url.searchParams.set('api_key', apiKey);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`TMDB ${res.status}`);
+  return res.json();
 }
 
-async function fetchTmdb(apiKey, tmdbType, id) {
-  if (!apiKey) return null;
-  const res = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${id}?api_key=${encodeURIComponent(apiKey)}`);
-  if (!res.ok) throw new Error(`TMDb ${res.status}`);
-  const j = await res.json();
-  return {
-    id,
-    type: tmdbType,
-    rating: typeof j.vote_average === 'number' ? j.vote_average : null,
-    votes: typeof j.vote_count === 'number' ? j.vote_count : null,
-  };
-}
+const takeGuids = (m) => {
+  const g = m?.Guid || m?.guid || [];
+  const arr = Array.isArray(g) ? g : g ? [g] : [];
+  return arr.map(x => String(x.id || x).toLowerCase());
+};
 
-/**
- * Get TMDb vote/rating for a Plex item by ratingKey.
- * Falls back to the show's TMDb id if the episode itself has none.
- */
 export async function getTmdbForRatingKey({ baseUrl, token, ratingKey, apiKey }) {
   if (!apiKey) return null;
-  const ck = `tmdb:${ratingKey}`;
-  const cached = getCache(ck);
-  if (cached !== null) return cached;
+  if (cache.has(ratingKey)) return cache.get(ratingKey);
 
-  const meta = await fetchPlexMeta(baseUrl, token, ratingKey, true);
-  let idf = extractTmdb(meta);
+  const detail = await plexFetch({
+    baseUrl, token,
+    path: `/library/metadata/${encodeURIComponent(ratingKey)}`,
+    params: { includeGuids: '1' }
+  });
+  const meta = detail?.MediaContainer?.Metadata?.[0] || detail?.MediaContainer?.Metadata || detail?.Metadata?.[0] || detail?.Metadata;
+  if (!meta) return null;
 
-  // Episode without tmdb guid? Try the series (grandparent)
-  if ((!idf || !idf.id) && meta?.grandparentRatingKey) {
-    const showMeta = await fetchPlexMeta(baseUrl, token, meta.grandparentRatingKey, true);
-    idf = extractTmdb(showMeta);
+  let probe = meta;
+  if (String(meta.type).toLowerCase() === 'episode' && meta.grandparentRatingKey) {
+    const gp = await plexFetch({
+      baseUrl, token,
+      path: `/library/metadata/${encodeURIComponent(meta.grandparentRatingKey)}`,
+      params: { includeGuids: '1' }
+    });
+    probe = gp?.MediaContainer?.Metadata?.[0] || gp?.MediaContainer?.Metadata || gp?.Metadata?.[0] || gp?.Metadata || meta;
   }
-  if (!idf) { setCache(ck, null); return null; }
 
-  const out = await fetchTmdb(apiKey, idf.tmdbType, idf.id);
-  setCache(ck, out);
-  return out;
+  const guids = takeGuids(probe);
+
+  // direct TMDB
+  const t = guids.find(x => x.startsWith('tmdb://'));
+  if (t) {
+    const id = t.replace('tmdb://', '');
+    const isTv = (probe.type || '').toLowerCase() === 'show';
+    const data = await tmdbFetch(`/${isTv ? 'tv' : 'movie'}/${id}`, apiKey);
+    const out = {
+      tmdb_id: data.id,
+      type: isTv ? 'tv' : 'movie',
+      title: data.title || data.name || '',
+      year: (data.release_date || data.first_air_date || '').slice(0, 4),
+      vote_average: data.vote_average || 0,
+      vote_count: data.vote_count || 0,
+    };
+    cache.set(ratingKey, out);
+    return out;
+  }
+
+  // TVDB fallback
+  const tvdb = guids.find(x => x.startsWith('tvdb://'));
+  if (tvdb) {
+    const id = tvdb.replace('tvdb://', '');
+    const f = await tmdbFetch(`/find/${id}`, apiKey, { external_source: 'tvdb_id' });
+    const pick = [...(f.tv_results || []), ...(f.movie_results || [])].sort((a,b)=> (b.vote_count||0)-(a.vote_count||0))[0];
+    if (pick) {
+      const out = {
+        tmdb_id: pick.id,
+        type: pick.name ? 'tv' : 'movie',
+        title: pick.title || pick.name || '',
+        year: (pick.release_date || pick.first_air_date || '').slice(0,4),
+        vote_average: pick.vote_average || 0,
+        vote_count: pick.vote_count || 0,
+      };
+      cache.set(ratingKey, out);
+      return out;
+    }
+  }
+
+  // IMDB fallback
+  const imdb = guids.find(x => x.startsWith('imdb://'));
+  if (imdb) {
+    const id = imdb.replace('imdb://', '');
+    const f = await tmdbFetch(`/find/${id}`, apiKey, { external_source: 'imdb_id' });
+    const pick = [...(f.movie_results || []), ...(f.tv_results || [])].sort((a,b)=> (b.vote_count||0)-(a.vote_count||0))[0];
+    if (pick) {
+      const out = {
+        tmdb_id: pick.id,
+        type: pick.name ? 'tv' : 'movie',
+        title: pick.title || pick.name || '',
+        year: (pick.release_date || pick.first_air_date || '').slice(0,4),
+        vote_average: pick.vote_average || 0,
+        vote_count: pick.vote_count || 0,
+      };
+      cache.set(ratingKey, out);
+      return out;
+    }
+  }
+
+  // last-ditch: search
+  const title = probe.title || probe.grandparentTitle || probe.parentTitle || '';
+  const year = Number(probe.year || 0);
+  if (title) {
+    if ((probe.type || '').toLowerCase() === 'show') {
+      const s = await tmdbFetch('/search/tv', apiKey, { query: title, first_air_date_year: year || undefined });
+      const pick = (s.results || []).sort((a,b)=> (b.vote_count||0)-(a.vote_count||0))[0];
+      if (pick) {
+        const out = {
+          tmdb_id: pick.id, type: 'tv', title: pick.name || '', year: (pick.first_air_date || '').slice(0,4),
+          vote_average: pick.vote_average || 0, vote_count: pick.vote_count || 0,
+        };
+        cache.set(ratingKey, out); return out;
+      }
+    } else {
+      const s = await tmdbFetch('/search/movie', apiKey, { query: title, year: year || undefined });
+      const pick = (s.results || []).sort((a,b)=> (b.vote_count||0)-(a.vote_count||0))[0];
+      if (pick) {
+        const out = {
+          tmdb_id: pick.id, type: 'movie', title: pick.title || '', year: (pick.release_date || '').slice(0,4),
+          vote_average: pick.vote_average || 0, vote_count: pick.vote_count || 0,
+        };
+        cache.set(ratingKey, out); return out;
+      }
+    }
+  }
+  return null;
 }
-
-// Back-compat alias if any old import still lingers
-export const tmdbForRatingKey = getTmdbForRatingKey;
-export default { getTmdbForRatingKey };

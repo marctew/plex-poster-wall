@@ -1,45 +1,39 @@
-import React, { useEffect, useRef, useState } from 'react';
-import API from '../lib/api.js';
+import React from 'react';
 
-const cache = new Map(); // ratingKey -> {rating, votes}
-
-export function useTmdb(ratingKey) {
-  const [tmdb, setTmdb] = useState(null);
-  const busy = useRef(false);
-
-  useEffect(() => {
-    let dead = false;
-    async function run() {
-      if (!ratingKey) return setTmdb(null);
-      if (cache.has(ratingKey)) return setTmdb(cache.get(ratingKey));
-      if (busy.current) return;
-      busy.current = true;
-      try {
-        const data = await API.getTmdb(ratingKey);
-        const info = data && typeof data.rating === 'number'
-          ? { rating: data.rating, votes: data.votes || null }
-          : null;
-        cache.set(ratingKey, info);
-        if (!dead) setTmdb(info);
-      } catch {
-        if (!dead) setTmdb(null);
-      } finally { busy.current = false; }
-    }
-    run();
-    return () => { dead = true; };
-  }, [ratingKey]);
-
-  return tmdb;
+function Chip({ children, title }) {
+  return (
+    <span
+      title={title}
+      className="px-2 py-0.5 rounded border border-slate-700 bg-slate-900/70 text-[10px] uppercase tracking-wide text-slate-200"
+      style={{ lineHeight: '1.2' }}
+    >
+      {children}
+    </span>
+  );
 }
 
-export default function BadgesRow({ tmdb }) {
-  if (!tmdb) return null;
-  return (
-    <div className="mt-3 flex items-center justify-center gap-2">
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] bg-emerald-900/50 border border-emerald-700/60">
-        <span className="font-bold tracking-tight">TMDb</span>
-        <span className="font-semibold">{tmdb.rating.toFixed(1)}</span>
-      </span>
-    </div>
-  );
+export default function Badges({ media, className = '', show = true }) {
+  if (!show || !media) return null;
+
+  const out = [];
+
+  if (media.resolution) out.push(<Chip key="res" title="Resolution">{media.resolution}</Chip>);
+  if (media.hdr) out.push(<Chip key="hdr" title="High Dynamic Range">{media.hdr}</Chip>);
+  if (media.atmos) out.push(<Chip key="atmos" title="Dolby Atmos">ATMOS</Chip>);
+
+  // Audio channels as 5.1 / 7.1
+  if (media.audioChannels) {
+    const ch = Number(media.audioChannels);
+    if (ch >= 2) {
+      const layout = ch === 6 ? '5.1' : ch === 8 ? '7.1' : `${ch}.0`;
+      out.push(<Chip key="ch" title="Audio Channels">{layout}</Chip>);
+    }
+  }
+
+  // Codecs
+  if (media.videoCodec) out.push(<Chip key="vcodec" title="Video Codec">{media.videoCodec}</Chip>);
+  if (media.audioCodec) out.push(<Chip key="acodec" title="Audio Codec">{media.audioCodec}</Chip>);
+
+  if (!out.length) return null;
+  return <div className={`flex flex-wrap items-center justify-center gap-2 ${className}`}>{out}</div>;
 }

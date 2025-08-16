@@ -11,12 +11,12 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-
 const state = { nowPlaying: null };
+
 const server = http.createServer(app);
 const wss = initWSServer(server);
 
-// tiny broadcaster fn we pass into routes for live preview
+// expose broadcast to routes (used after /config save)
 const broadcast = (type, payload) => broadcastJSON(wss, { type, payload });
 
 app.use('/api', createRouter({ state, broadcast }));
@@ -66,7 +66,7 @@ async function pollSessions() {
     } else if (lastNowPlayingKey !== null) {
       lastNowPlayingKey = null;
       state.nowPlaying = null;
-      broadcast('IDLE', null);
+      broadcast('IDLE');
     }
   } catch (e) {
     if (process.env.LOG_SESSIONS === '1') console.error('pollSessions error', e.message);

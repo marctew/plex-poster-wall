@@ -2,146 +2,95 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
 
-// --- DB SETUP ---
 const db = new Database('config.db');
 try { db.pragma('journal_mode = WAL'); } catch {}
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS admin (
+CREATE TABLE IF NOT EXISTS admin_user (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  username TEXT NOT NULL,
-  salt TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  token_secret TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  username   TEXT NOT NULL,
+  pass_hash  TEXT NOT NULL,   -- "s1:<hex>" or "pbk2:<hex>"
+  salt       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 `);
 
-function addCol(sql) { try { db.exec(sql); } catch {} }
-addCol(`ALTER TABLE admin ADD COLUMN token_secret TEXT NOT NULL DEFAULT ''`);
-addCol(`ALTER TABLE admin ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`);
-
-function getAdminRow() {
-  return db.prepare('SELECT * FROM admin WHERE id = 1').get();
+function getSecret() {
+  const row = db.prepare('SELECT value FROM auth_meta WHERE key = ?').get('secret');
+  if (row?.value) return Buffer.from(row.value, 'hex');
+  const sec = crypto.randomBytes(32);
+  db.prepare('INSERT OR REPLACE INTO auth_meta (key,value) VALUES (?,?)')
+    .run('secret', sec.toString('hex'));
+  return sec;
 }
+const SECRET = getSecret();
 
-// Backfill secret if needed
-(function ensureSecret() {
-  const row = getAdminRow();
-  if (row && (!row.token_secret || row.token_secret.length < 16)) {
-    const secret = crypto.randomBytes(32).toString('base64url');
-    db.prepare('UPDATE admin SET token_secret = @s WHERE id = 1').run({ s: secret });
-  }
-})();
+// scrypt with safe memory + PBKDF2 fallback
+const SCRYPT = { N: 1 << 14, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }; // ~16MiB
 
-// --- SCRYPT PARAMS ---
-function scryptParams() {
-  const N = 1 << 15; // 32768
-  const r = 8;
-  const p = 1;
-  const keylen = 64;
-  // Bump maxmem so Node doesn’t error (default ~32MB is too low for N=32768, r=8)
-  const maxmem = 128 * 1024 * 1024; // 128MB headroom
-  return { N, r, p, keylen, maxmem };
+const saltHex = () => crypto.randomBytes(16).toString('hex');
+const scrypt = (pwd, salt) => crypto.scryptSync(pwd, Buffer.from(salt, 'hex'), 64, SCRYPT).toString('hex');
+const pbkdf2 = (pwd, salt) => crypto.pbkdf2Sync(pwd, Buffer.from(salt, 'hex'), 310000, 64, 'sha256').toString('hex');
+
+export function hasAdmin() {
+  return !!db.prepare('SELECT 1 FROM admin_user WHERE id = 1').get();
 }
-
-// --- PASSWORD HASHING ---
-function hashPassword(password, salt) {
-  const { N, r, p, keylen, maxmem } = scryptParams();
-  const derived = crypto.scryptSync(password, salt, keylen, { N, r, p, maxmem });
-  return `scrypt$N=${N},r=${r},p=${p}$${salt}$${derived.toString('base64url')}`;
-}
-
-function verifyPassword(password, stored) {
-  try {
-    const [algo, params, salt, dig] = stored.split('$');
-    if (algo !== 'scrypt') return false;
-    const parts = Object.fromEntries(params.split(',').map(kv => kv.split('=')));
-    const N = Number(parts.N), r = Number(parts.r), p = Number(parts.p);
-    const digestBuf = Buffer.from(dig, 'base64url');
-    const keylen = digestBuf.length;
-    // Calculate a safe maxmem for these params (>= memory needed)
-    const needed = 128 * N * r; // bytes (approx scrypt memory)
-    const maxmem = Math.max(64 * 1024 * 1024, needed + (8 * 1024 * 1024)); // add some slack
-    const derived = crypto.scryptSync(password, salt, keylen, { N, r, p, maxmem });
-    return crypto.timingSafeEqual(digestBuf, derived);
-  } catch {
-    return false;
-  }
-}
-
-// --- TOKEN (HMAC “JWT”-ish) ---
-function b64url(obj) { return Buffer.from(JSON.stringify(obj)).toString('base64url'); }
-function sign(payload, secret) {
-  const head = b64url({ alg: 'HS256', typ: 'JWT' });
-  const body = b64url(payload);
-  const data = `${head}.${body}`;
-  const sig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
-  return `${data}.${sig}`;
-}
-function verify(token, secret) {
-  const parts = String(token || '').split('.');
-  if (parts.length !== 3) return null;
-  const [head, body, sig] = parts;
-  const data = `${head}.${body}`;
-  const expect = crypto.createHmac('sha256', secret).update(data).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
-  let payload;
-  try { payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); } catch { return null; }
-  if (typeof payload.exp === 'number' && Date.now() > payload.exp) return null;
-  return payload;
-}
-
-// --- PUBLIC API ---
-export function hasAdmin() { return !!getAdminRow(); }
 
 export function setAdminCredentials(username, password) {
-  if (hasAdmin()) throw new Error('Admin already configured');
-  const u = String(username || '').trim();
-  const p = String(password || '');
-  if (!u || !p) throw new Error('Missing username or password');
-
-  const salt = crypto.randomBytes(16).toString('base64url');
-  const password_hash = hashPassword(p, salt);
-  const token_secret = crypto.randomBytes(32).toString('base64url');
-  const created_at = Date.now();
-
+  if (!username || !password) throw new Error('Missing username/password');
+  const salt = saltHex();
+  let method = 's1', hash;
+  try { hash = scrypt(password, salt); }
+  catch { method = 'pbk2'; hash = pbkdf2(password, salt); }
+  const ts = Date.now();
   db.prepare(`
-    INSERT INTO admin (id, username, salt, password_hash, token_secret, created_at)
-    VALUES (1, @username, @salt, @password_hash, @token_secret, @created_at)
-  `).run({ username: u, salt, password_hash, token_secret, created_at });
-
-  return { username: u, created_at };
+    INSERT INTO admin_user (id, username, pass_hash, salt, created_at, updated_at)
+    VALUES (1, @u, @h, @s, @ts, @ts)
+    ON CONFLICT(id) DO UPDATE SET
+      username=excluded.username, pass_hash=excluded.pass_hash,
+      salt=excluded.salt, updated_at=excluded.updated_at
+  `).run({ u: String(username), h: `${method}:${hash}`, s: salt, ts });
+  return true;
 }
 
 export function verifyLogin(username, password) {
-  const row = getAdminRow();
-  if (!row) return false;
-  if (String(username || '').trim() !== row.username) return false;
-  return verifyPassword(String(password || ''), row.password_hash);
+  const row = db.prepare('SELECT username, pass_hash, salt FROM admin_user WHERE id = 1').get();
+  if (!row || row.username !== String(username)) return false;
+  const [prefix, stored] = row.pass_hash.includes(':') ? row.pass_hash.split(':', 2) : [null, row.pass_hash];
+  let calc;
+  try { calc = (prefix === 'pbk2') ? pbkdf2(password, row.salt) : scrypt(password, row.salt); }
+  catch { calc = pbkdf2(password, row.salt); }
+  const a = Buffer.from(calc, 'hex'); const b = Buffer.from(stored, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// tiny HS256 JWT
+const b64url = (obj) => Buffer.from(typeof obj === 'string' ? obj : JSON.stringify(obj))
+  .toString('base64').replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+const sign = (s) => crypto.createHmac('sha256', SECRET).update(s).digest('base64')
+  .replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+
 export function createSession(username, hours = 24) {
-  const row = getAdminRow();
-  if (!row) throw new Error('No admin configured');
-  const now = Date.now();
-  const exp = now + Math.max(1, Number(hours)) * 60 * 60 * 1000;
-  return sign({ sub: String(username), iat: now, exp }, row.token_secret);
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { sub: username, iat: now, exp: now + hours * 3600, v: 1 };
+  const seg = `${b64url(header)}.${b64url(payload)}`;
+  return `${seg}.${sign(seg)}`;
 }
 
 export function verifyToken(token) {
-  const row = getAdminRow();
-  if (!row) return null;
-  const payload = verify(token, row.token_secret);
-  if (!payload) return null;
-  if (payload.sub !== row.username) return null;
-  return { username: row.username, iat: payload.iat, exp: payload.exp };
-}
-
-export function rotateTokenSecret() {
-  const row = getAdminRow();
-  if (!row) throw new Error('No admin configured');
-  const secret = crypto.randomBytes(32).toString('base64url');
-  db.prepare('UPDATE admin SET token_secret = @secret WHERE id = 1').run({ secret });
-  return true;
+  if (!token || token.split('.').length !== 3) return null;
+  const [h, p, s] = token.split('.');
+  if (sign(`${h}.${p}`) !== s) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(p.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'));
+    if (!payload?.sub) return null;
+    if (payload.exp && Math.floor(Date.now()/1000) > payload.exp) return null;
+    return { username: payload.sub };
+  } catch { return null; }
 }
