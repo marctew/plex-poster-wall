@@ -2,37 +2,47 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Badges from './Badges.jsx';
 import TmdbBadge from './TmdbBadge.jsx';
+import API from '../lib/api.js';
 
 function formatTitle(item) {
   if (item.type === 'episode' && item.series) {
-    const s = item.seasonNumber != null ? String(item.seasonNumber).padStart(2, '0') : '??';
-    const e = item.episodeNumber != null ? String(item.episodeNumber).padStart(2, '0') : '??';
+    const s = item.seasonNumber != null ? String(item.seasonNumber).padStart(2,'0') : '??';
+    const e = item.episodeNumber != null ? String(item.episodeNumber).padStart(2,'0') : '??';
     return `${item.series} · S${s}E${e} · ${item.episodeTitle || item.title}`;
-    }
+  }
   return item.title || 'Untitled';
 }
 
 export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
   const [index, setIndex] = useState(0);
+  const [tmdb, setTmdb] = useState(null);
   const timer = useRef(null);
 
   useEffect(() => {
     if (!items.length) return;
-    setIndex(0);
     timer.current = setInterval(() => setIndex(i => (i + 1) % items.length), dwell);
     return () => clearInterval(timer.current);
   }, [items, dwell]);
 
   const current = items[index];
+
+  // Lazy-load TMDB for the current slide
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!cfg?.show_tmdb || !current?.ratingKey) { setTmdb(null); return; }
+      try { const data = await API.getTmdb(current.ratingKey); if (active) setTmdb(data); }
+      catch { if (active) setTmdb(null); }
+    })();
+    return () => { active = false; };
+  }, [current?.ratingKey, cfg?.show_tmdb]);
+
   const posterH = (cfg?.poster_height_vh ?? 90) + 'vh';
   const blurPx = cfg?.backdrop_blur_px ?? 14;
   const backOpacity = cfg?.backdrop_opacity ?? 0.28;
-
   const baseRem = cfg?.title_size === 'lg' ? 1.875 : cfg?.title_size === 'sm' ? 1.25 : 1.5;
   const titleSize = `${baseRem * (cfg?.title_scale ?? 1)}rem`;
   const synopsisSize = `${0.875 * (cfg?.synopsis_scale ?? 1)}rem`;
-
-  const showBadges = cfg?.show_badges !== 0;
 
   return (
     <div className="absolute inset-0 flex items-center justify-center">
@@ -75,8 +85,13 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
               {formatTitle(current)}
             </div>
 
-            {showBadges && <Badges media={current.media} className="mt-2" />}
-            <TmdbBadge ratingKey={current.ratingKey} cfg={cfg} />
+            {/* Badges row */}
+            {cfg?.show_badges || cfg?.show_tmdb ? (
+              <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
+                {cfg?.show_badges ? <Badges media={current.media} /> : null}
+                {cfg?.show_tmdb ? <TmdbBadge score={tmdb?.vote_average} /> : null}
+              </div>
+            ) : null}
 
             {cfg?.show_synopsis ? (
               <div

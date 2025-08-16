@@ -1,39 +1,30 @@
 import React from 'react';
 
-function Chip({ children, title }) {
+function Chip({ children }) {
   return (
     <span
-      title={title}
-      className="px-2 py-0.5 rounded border border-slate-700 bg-slate-900/70 text-[10px] uppercase tracking-wide text-slate-200"
-      style={{ lineHeight: '1.2' }}
+      className="inline-block px-2 py-1 rounded border text-[11px] leading-none"
+      style={{ borderColor: 'rgba(51,65,85,.8)', background: 'rgba(15,23,42,.65)' }}
     >
       {children}
     </span>
   );
 }
 
-export default function Badges({ media, className = '', show = true }) {
-  if (!show || !media) return null;
+export default function Badges({ media, className = '' }) {
+  if (!media) return null;
+  const chips = [];
 
-  const out = [];
+  if (media.resolution) chips.push(<Chip key="res">{media.resolution === '2160p' ? '4K' : media.resolution.replace('p','')}</Chip>);
+  if (media.audioChannels) chips.push(<Chip key="ch">{media.audioChannels}</Chip>);
 
-  if (media.resolution) out.push(<Chip key="res" title="Resolution">{media.resolution}</Chip>);
-  if (media.hdr) out.push(<Chip key="hdr" title="High Dynamic Range">{media.hdr}</Chip>);
-  if (media.atmos) out.push(<Chip key="atmos" title="Dolby Atmos">ATMOS</Chip>);
-
-  // Audio channels as 5.1 / 7.1
-  if (media.audioChannels) {
-    const ch = Number(media.audioChannels);
-    if (ch >= 2) {
-      const layout = ch === 6 ? '5.1' : ch === 8 ? '7.1' : `${ch}.0`;
-      out.push(<Chip key="ch" title="Audio Channels">{layout}</Chip>);
-    }
+  if (media.videoCodec) {
+    const vc = String(media.videoCodec).toUpperCase().replace('H265','HEVC').replace('X265','HEVC').replace('H264','AVC');
+    chips.push(<Chip key="vcodec">{vc}</Chip>);
   }
+  if (media.audioCodec) chips.push(<Chip key="acodec">{String(media.audioCodec).toUpperCase()}</Chip>);
+  if (media.hdr) chips.push(<Chip key="hdr">{media.hdr}</Chip>);
 
-  // Codecs
-  if (media.videoCodec) out.push(<Chip key="vcodec" title="Video Codec">{media.videoCodec}</Chip>);
-  if (media.audioCodec) out.push(<Chip key="acodec" title="Audio Codec">{media.audioCodec}</Chip>);
-
-  if (!out.length) return null;
-  return <div className={`flex flex-wrap items-center justify-center gap-2 ${className}`}>{out}</div>;
+  if (!chips.length) return null;
+  return <div className={`flex items-center gap-2 flex-wrap justify-center ${className}`}>{chips}</div>;
 }

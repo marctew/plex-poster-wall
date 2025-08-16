@@ -1,7 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Badges from './Badges.jsx';
-import TmdbBadge from './TmdbBadge.jsx';
 
 function ProgressBar({ progress = 0, widthClass = 'w-[80vw]' }) {
   return (
@@ -30,8 +29,6 @@ export default function NowPlaying({ session, cfg }) {
   const baseRem = cfg?.title_size === 'lg' ? 2.0 : cfg?.title_size === 'sm' ? 1.375 : 1.75;
   const titleSize = `${baseRem * (cfg?.title_scale ?? 1)}rem`;
   const synopsisSize = `${0.95 * (cfg?.synopsis_scale ?? 1)}rem`;
-
-  const showBadges = cfg?.show_badges !== 0;
 
   return (
     <div className="fixed inset-0">
@@ -68,8 +65,7 @@ export default function NowPlaying({ session, cfg }) {
           </div>
           {session.year && <div className="text-slate-300/80 mt-1">{session.year}</div>}
 
-          {showBadges && <Badges media={session.media} className="mt-2" />}
-          <TmdbBadge ratingKey={session.ratingKey} cfg={cfg} />
+          {cfg?.show_badges ? <Badges media={session.media} className="mt-2" /> : null}
 
           {cfg?.show_synopsis ? (
             <div

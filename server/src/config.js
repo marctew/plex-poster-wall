@@ -2,22 +2,26 @@ import Database from 'better-sqlite3';
 import dotenv from 'dotenv';
 dotenv.config();
 
-function csv(str=''){return (str||'').split(',').map(s=>s.trim()).filter(Boolean);}
+function parseCSV(str=''){ return (str||'').split(',').map(s=>s.trim()).filter(Boolean); }
 
 const db = new Database('config.db');
-try{db.pragma('journal_mode = WAL');}catch{}
+try { db.pragma('journal_mode = WAL'); } catch {}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS config (
   id INTEGER PRIMARY KEY CHECK(id=1),
+
   plex_url TEXT,
   plex_token TEXT,
   library_keys TEXT,
   user_filters TEXT,
   player_filters TEXT,
+
   latest_limit INTEGER DEFAULT 40,
   carousel_dwell_ms INTEGER DEFAULT 3500,
   poll_ms INTEGER DEFAULT 3000,
+
+  -- display
   show_synopsis INTEGER DEFAULT 1,
   synopsis_max_lines INTEGER DEFAULT 6,
   poster_height_vh INTEGER DEFAULT 90,
@@ -28,34 +32,34 @@ CREATE TABLE IF NOT EXISTS config (
   title_scale REAL DEFAULT 1.0,
   synopsis_scale REAL DEFAULT 1.0,
   theme TEXT DEFAULT 'neo-noir',
-  -- NEW
+
+  -- toggles
+  show_badges INTEGER DEFAULT 1,
   random_order INTEGER DEFAULT 0,
-  tmdb_api_key TEXT,
-  show_tmdb_score INTEGER DEFAULT 1,
-  show_tmdb_logo INTEGER DEFAULT 1,
-  show_badges INTEGER DEFAULT 1
+  show_tmdb INTEGER DEFAULT 1,
+  tmdb_api_key TEXT
 );`);
 
-const exist = db.prepare('SELECT 1 FROM config WHERE id=1').get();
-if(!exist){
+const exists = db.prepare('SELECT 1 FROM config WHERE id=1').get();
+if (!exists) {
   db.prepare(`INSERT INTO config (
     id, plex_url, plex_token, library_keys, user_filters, player_filters,
     latest_limit, carousel_dwell_ms, poll_ms,
     show_synopsis, synopsis_max_lines, poster_height_vh, title_size, backdrop_blur_px, backdrop_opacity,
     prefer_series_art, title_scale, synopsis_scale, theme,
-    random_order, tmdb_api_key, show_tmdb_score, show_tmdb_logo, show_badges
+    show_badges, random_order, show_tmdb, tmdb_api_key
   ) VALUES (
     1, @u, @t, @lk, @uf, @pf,
     @ll, @cd, @pm,
     1, 6, 90, 'xl', 14, 0.30,
     1, 1.0, 1.0, 'neo-noir',
-    0, @tmdb, 1, 1, 1
+    1, 0, 1, @tmdb
   )`).run({
     u: process.env.PLEX_URL || null,
     t: process.env.PLEX_TOKEN || null,
-    lk: process.env.LIBRARY_KEYS ? JSON.stringify(csv(process.env.LIBRARY_KEYS)) : null,
-    uf: process.env.USER_FILTERS ? JSON.stringify(csv(process.env.USER_FILTERS)) : null,
-    pf: process.env.PLAYER_FILTERS ? JSON.stringify(csv(process.env.PLAYER_FILTERS)) : null,
+    lk: process.env.LIBRARY_KEYS ? JSON.stringify(parseCSV(process.env.LIBRARY_KEYS)) : null,
+    uf: process.env.USER_FILTERS ? JSON.stringify(parseCSV(process.env.USER_FILTERS)) : null,
+    pf: process.env.PLAYER_FILTERS ? JSON.stringify(parseCSV(process.env.PLAYER_FILTERS)) : null,
     ll: Number(process.env.LATEST_LIMIT || 40),
     cd: Number(process.env.CAROUSEL_DWELL_MS || 3500),
     pm: Number(process.env.POLL_MS || 3000),
@@ -63,13 +67,12 @@ if(!exist){
   });
 }
 
-// Backfill (ignore if already exist)
-const add = (sql)=>{try{db.exec(sql);}catch{}};
-add("ALTER TABLE config ADD COLUMN random_order INTEGER DEFAULT 0");
-add("ALTER TABLE config ADD COLUMN tmdb_api_key TEXT");
-add("ALTER TABLE config ADD COLUMN show_tmdb_score INTEGER DEFAULT 1");
-add("ALTER TABLE config ADD COLUMN show_tmdb_logo INTEGER DEFAULT 1");
+// Backfill in case your DB predates these columns
+const add = (sql)=>{ try{ db.exec(sql); }catch{} };
 add("ALTER TABLE config ADD COLUMN show_badges INTEGER DEFAULT 1");
+add("ALTER TABLE config ADD COLUMN random_order INTEGER DEFAULT 0");
+add("ALTER TABLE config ADD COLUMN show_tmdb INTEGER DEFAULT 1");
+add("ALTER TABLE config ADD COLUMN tmdb_api_key TEXT");
 
 export function getConfig(){
   const r = db.prepare('SELECT * FROM config WHERE id=1').get();
@@ -82,6 +85,7 @@ export function getConfig(){
     latest_limit: r.latest_limit ?? 40,
     carousel_dwell_ms: r.carousel_dwell_ms ?? 3500,
     poll_ms: r.poll_ms ?? 3000,
+
     show_synopsis: r.show_synopsis ?? 1,
     synopsis_max_lines: r.synopsis_max_lines ?? 6,
     poster_height_vh: r.poster_height_vh ?? 90,
@@ -92,11 +96,11 @@ export function getConfig(){
     title_scale: Number(r.title_scale ?? 1.0),
     synopsis_scale: Number(r.synopsis_scale ?? 1.0),
     theme: r.theme || 'neo-noir',
-    random_order: r.random_order ?? 0,
-    tmdb_api_key: r.tmdb_api_key || '',
-    show_tmdb_score: r.show_tmdb_score ?? 1,
-    show_tmdb_logo: r.show_tmdb_logo ?? 1,
+
     show_badges: r.show_badges ?? 1,
+    random_order: r.random_order ?? 0,
+    show_tmdb: r.show_tmdb ?? 1,
+    tmdb_api_key: r.tmdb_api_key || '',
   };
 }
 
@@ -110,8 +114,7 @@ export function setConfig(partial){
     show_synopsis=@ss, synopsis_max_lines=@sml, poster_height_vh=@ph,
     title_size=@tsz, backdrop_blur_px=@bb, backdrop_opacity=@bo,
     prefer_series_art=@psa, title_scale=@ts, synopsis_scale=@syns, theme=@th,
-    random_order=@ro, tmdb_api_key=@tmdb, show_tmdb_score=@stms, show_tmdb_logo=@stml,
-    show_badges=@sb
+    show_badges=@sb, random_order=@ro, show_tmdb=@stmdb, tmdb_api_key=@tmdb
     WHERE id=1`).run({
       u: n.plex_url || null,
       t: n.plex_token || null,
@@ -131,11 +134,10 @@ export function setConfig(partial){
       ts: Number(n.title_scale ?? 1.0),
       syns: Number(n.synopsis_scale ?? 1.0),
       th: String(n.theme || 'neo-noir'),
-      ro: n.random_order ? 1 : 0,
-      tmdb: n.tmdb_api_key || null,
-      stms: n.show_tmdb_score ? 1 : 0,
-      stml: n.show_tmdb_logo ? 1 : 0,
       sb: n.show_badges ? 1 : 0,
+      ro: n.random_order ? 1 : 0,
+      stmdb: n.show_tmdb ? 1 : 0,
+      tmdb: n.tmdb_api_key || null,
   });
   return getConfig();
 }
