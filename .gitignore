@@ -1,0 +1,26 @@
+# Node
+node_modules/
+client/node_modules/
+server/node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+client/.vite*/
+client/dist/
+client/build/
+server/.cache/
+
+# Env & secrets
+.env
+.env.*
+server/config.db
+
+# OS crap
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

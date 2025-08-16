@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+/* THEME VARIABLES */
+:root { --color-backdrop:#0b0f17; --color-neon:#14f1d9; --color-accent:#ff7a90; --color-text:#e2e8f0; }
+:root[data-theme='neo-noir'] { --color-backdrop:#0b0f17; --color-neon:#14f1d9; --color-accent:#ff7a90; --color-text:#e2e8f0; }
+:root[data-theme='amber']   { --color-backdrop:#11100e; --color-neon:#ffb84d; --color-accent:#ff8c42; --color-text:#f3eee5; }
+:root[data-theme='synthwave']{ --color-backdrop:#0a0213; --color-neon:#00eaff; --color-accent:#ff00e5; --color-text:#efe7ff; }
+:root[data-theme='mono']    { --color-backdrop:#0d0d0d; --color-neon:#ffffff; --color-accent:#9ca3af; --color-text:#e5e7eb; }
+
+/* Use variables */
+.bg-backdrop { background-color: var(--color-backdrop) !important; }
+.text-neon { color: var(--color-neon) !important; }
+.bg-neon { background-color: var(--color-neon) !important; }
+
+/* glow and kiosk bits */
+.glow { text-shadow: 0 0 12px color-mix(in oklab, var(--color-neon) 50%, transparent); }
+.poster-shadow { box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
