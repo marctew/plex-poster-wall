@@ -21,3 +21,21 @@ html, body, #root { height: 100%; }
 .poster-shadow { box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Theme-driven vignette overlay for display screens */
+.vignette {
+  background:
+    radial-gradient(120% 100% at 50% 30%,
+      color-mix(in oklab, var(--color-neon) 9%, transparent) 0%,
+      transparent 45%),
+    radial-gradient(120% 120% at 50% 120%,
+      color-mix(in oklab, var(--color-accent) 10%, transparent) 0%,
+      transparent 60%);
+}
+
+/* Pills for tech badges */
+.badge {
+  background: color-mix(in oklab, var(--color-neon) 12%, transparent);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset, 0 4px 18px rgba(0,0,0,0.45);
+}

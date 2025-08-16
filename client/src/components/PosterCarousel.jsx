@@ -10,6 +10,14 @@ function formatTitle(item) {
   return item.title || 'Untitled';
 }
 
+function tmdbRating(item) {
+  // Prefer item rating if TMDb, else grandparent
+  const isTMDb = (img) => typeof img === 'string' && img.toLowerCase().includes('themoviedb');
+  if (isTMDb(item.ratingImage) && item.rating) return item.rating;
+  if (isTMDb(item.grandparentRatingImage) && item.grandparentRating) return item.grandparentRating;
+  return null;
+}
+
 export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
   const [index, setIndex] = useState(0);
   const timer = useRef(null);
@@ -25,14 +33,17 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
   const blurPx = cfg?.backdrop_blur_px ?? 14;
   const backOpacity = cfg?.backdrop_opacity ?? 0.28;
 
-  // base rem sizes for presets + scales
-  const baseRem = cfg?.title_size === 'lg' ? 1.875 : cfg?.title_size === 'sm' ? 1.25 : 1.5; // 3xl, xl, 2xl
+  const baseRem = 1.5;
   const titleSize = `${baseRem * (cfg?.title_scale ?? 1)}rem`;
-  const synopsisSize = `${0.875 * (cfg?.synopsis_scale ?? 1)}rem`; // text-sm
+  const synopsisSize = `${0.875 * (cfg?.synopsis_scale ?? 1)}rem`;
+
+  const rating = cfg?.show_tmdb_badge ? tmdbRating(current || {}) : null;
+
+  // summary fallback already done server-side, but guard here too
+  const summary = current?.summary || current?.grandparentSummary || current?.parentSummary || '';
 
   return (
     <div className="absolute inset-0 flex items-center justify-center">
-      {/* Backdrop fanart */}
       <AnimatePresence mode="wait">
         {current?.artUrl && (
           <motion.img
@@ -49,7 +60,8 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
         )}
       </AnimatePresence>
 
-      {/* Foreground poster */}
+      <div className="pointer-events-none absolute inset-0 z-0 vignette" />
+
       <div className="relative z-10 flex flex-col items-center justify-center max-w-[92vw]">
         <AnimatePresence mode="wait">
           {current && (
@@ -67,11 +79,20 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
           )}
         </AnimatePresence>
 
-        {/* Title + optional synopsis */}
         {current && (
           <div className="mt-4 text-center px-6 max-w-[92vw]">
-            <div className="font-semibold glow" style={{ fontSize: titleSize }}>
+            <div className="font-semibold glow flex items-center justify-center gap-2" style={{ fontSize: titleSize }}>
               {formatTitle(current)}
+              {rating != null && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-700/60 text-xs"
+                  title="TMDb user score">
+                  <svg width="18" height="18" viewBox="0 0 24 24" className="shrink-0" aria-hidden="true">
+                    <rect x="1" y="1" width="22" height="22" rx="4" fill="#01d277"></rect>
+                    <text x="12" y="16" textAnchor="middle" fontSize="10" fill="#001a0f" fontFamily="sans-serif">TMDB</text>
+                  </svg>
+                  <span>{Number(rating).toFixed(1)}</span>
+                </span>
+              )}
             </div>
             {cfg?.show_synopsis ? (
               <div
@@ -84,7 +105,7 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
                   overflow: 'hidden'
                 }}
               >
-                {current.summary || '—'}
+                {summary || '—'}
               </div>
             ) : null}
           </div>

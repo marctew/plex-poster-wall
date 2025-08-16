@@ -48,22 +48,28 @@ export async function getRecentlyAdded({ baseUrl, token, sectionKey, limit = 40 
   const arr = Array.isArray(meta) ? meta : [meta];
   return arr.filter(Boolean).map((m) => ({
     ratingKey: String(m.ratingKey),
-    type: m.type, // movie, episode, etc.
+    type: m.type,
     title: m.title || m.grandparentTitle || m.parentTitle,
     year: m.year,
-    // expose all possible art paths; selection happens later based on config
     thumb: m.thumb,
     art: m.art,
     parentThumb: m.parentThumb,
     parentArt: m.parentArt,
     grandparentThumb: m.grandparentThumb,
     grandparentArt: m.grandparentArt,
+    grandparentSummary: m.grandparentSummary || '',
+    parentSummary: m.parentSummary || '',
     addedAt: Number(m.addedAt) || 0,
     summary: m.summary || '',
     series: m.grandparentTitle || null,
     seasonNumber: m.parentIndex != null ? Number(m.parentIndex) : null,
     episodeNumber: m.index != null ? Number(m.index) : null,
-    episodeTitle: m.type === 'episode' ? m.title || '' : null,
+    episodeTitle: m.type === 'episode' ? (m.title || '') : null,
+    // Ratings (for TMDb badge)
+    rating: m.rating != null ? Number(m.rating) : null,
+    ratingImage: m.ratingImage || '',
+    grandparentRating: m.grandparentRating != null ? Number(m.grandparentRating) : null,
+    grandparentRatingImage: m.grandparentRatingImage || '',
   }));
 }
 
@@ -85,7 +91,6 @@ export async function getSessions({ baseUrl, token }) {
       ratingKey: String(v.ratingKey),
       title: v.title || v.grandparentTitle || v.parentTitle,
       type: v.type,
-      // expose all possible art paths; selection happens later based on config
       thumb: v.thumb,
       art: v.art,
       parentThumb: v.parentThumb,
@@ -93,11 +98,17 @@ export async function getSessions({ baseUrl, token }) {
       grandparentThumb: v.grandparentThumb,
       grandparentArt: v.grandparentArt,
       year: v.year,
-      summary: v.summary || '',
+      summary: v.summary || v.grandparentSummary || v.parentSummary || '',
       series: v.grandparentTitle || null,
       seasonNumber: v.parentIndex != null ? Number(v.parentIndex) : null,
       episodeNumber: v.index != null ? Number(v.index) : null,
       episodeTitle: v.type === 'episode' ? v.title || '' : null,
+      // Ratings for TMDb badge on Now Playing
+      rating: v.rating != null ? Number(v.rating) : null,
+      ratingImage: v.ratingImage || '',
+      grandparentRating: v.grandparentRating != null ? Number(v.grandparentRating) : null,
+      grandparentRatingImage: v.grandparentRatingImage || '',
+
       user: { id: user.id ? String(user.id) : undefined, title: user.title },
       player: {
         title: player.title,

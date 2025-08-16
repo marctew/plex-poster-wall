@@ -2,35 +2,67 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { getConfig, setConfig } from './config.js';
 import { getLibraries, getRecentlyAdded, buildImageProxyPath } from './plex.js';
+import { hasAdmin, setAdminCredentials, verifyLogin, createSession, verifyToken } from './auth.js';
 
-function pickArt(item, preferSeries) {
-  if (preferSeries && item.type === 'episode') {
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  const user = verifyToken(token);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  req.user = user;
+  next();
+}
+
+function pickArt(i, preferSeries) {
+  if (preferSeries && i.type === 'episode') {
     return {
-      thumb: item.grandparentThumb || item.parentThumb || item.thumb,
-      art: item.grandparentArt || item.parentArt || item.art,
+      thumb: i.grandparentThumb || i.parentThumb || i.thumb,
+      art: i.grandparentArt || i.parentArt || i.art,
     };
   }
-  return { thumb: item.thumb, art: item.art };
+  return { thumb: i.thumb, art: i.art };
 }
 
 export function createRouter({ state }) {
   const router = express.Router();
+  router.use(express.json());
 
-  // Health check
+  // Health
   router.get('/health', (req, res) => res.json({ ok: true }));
 
+  // Auth
+  router.get('/auth/status', (req, res) => {
+    const setup = !hasAdmin();
+    let authed = false;
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (token && verifyToken(token)) authed = true;
+    res.json({ setup, authed });
+  });
+
+  router.post('/auth/setup', (req, res) => {
+    if (hasAdmin()) return res.status(400).json({ error: 'Already configured' });
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+    setAdminCredentials(username, password);
+    const token = createSession(username, 24);
+    res.json({ ok: true, token, username });
+  });
+
+  router.post('/auth/login', (req, res) => {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+    if (!verifyLogin(username, password)) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = createSession(username, 24);
+    res.json({ ok: true, token, username });
+  });
+
   // Config
-  router.get('/config', (req, res) => {
-    res.json(getConfig());
-  });
+  router.get('/config', (req, res) => res.json(getConfig()));
+  router.post('/config', requireAuth, (req, res) => res.json(setConfig(req.body || {})));
 
-  router.post('/config', express.json(), (req, res) => {
-    const saved = setConfig(req.body || {});
-    res.json(saved);
-  });
-
-  // Libraries
-  router.get('/plex/libraries', async (req, res) => {
+  // Libraries (admin)
+  router.get('/plex/libraries', requireAuth, async (req, res) => {
     try {
       const cfg = getConfig();
       const libs = await getLibraries({ baseUrl: cfg.plex_url, token: cfg.plex_token });
@@ -40,7 +72,7 @@ export function createRouter({ state }) {
     }
   });
 
-  // Recently added across selected libraries
+  // Recently added → mapped (summary fallback + ratings)
   router.get('/latest', async (req, res) => {
     try {
       const cfg = getConfig();
@@ -51,37 +83,36 @@ export function createRouter({ state }) {
       const results = [];
       for (const key of keys) {
         const items = await getRecentlyAdded({
-          baseUrl: cfg.plex_url,
-          token: cfg.plex_token,
-          sectionKey: key,
-          limit,
+          baseUrl: cfg.plex_url, token: cfg.plex_token, sectionKey: key, limit
         });
         results.push(...items);
       }
 
       results.sort((a, b) => b.addedAt - a.addedAt);
-
-      const sliced = results.slice(0, limit).map((i) => {
+      const mapped = results.slice(0, limit).map((i) => {
         const chosen = pickArt(i, preferSeries);
+        // synopsis fallback: episode -> series -> season -> nothing
+        const summary = i.summary || i.grandparentSummary || i.parentSummary || '';
         return {
           ...i,
+          summary,
           thumbUrl: chosen.thumb ? buildImageProxyPath(chosen.thumb, 1000) : null,
           artUrl: chosen.art ? buildImageProxyPath(chosen.art, 2000) : null,
         };
       });
 
-      res.json(sliced);
+      res.json(mapped);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Now playing snapshot
+  // Now playing snapshot (already set in index poller)
   router.get('/now-playing', (req, res) => {
     res.json(state.nowPlaying || null);
   });
 
-  // Image proxy (keeps token server-side)
+  // Image proxy
   router.get('/image', async (req, res) => {
     try {
       const { path, width } = req.query;
