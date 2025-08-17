@@ -1,20 +1,22 @@
-# node junk
+# deps
 node_modules/
 client/node_modules/
 server/node_modules/
-client/.vite/
+
+# builds
 client/dist/
 server/dist/
 
-# local state
-config.db
-*.sqlite
-*.sqlite-journal
-*.log
-.DS_Store
-
 # env / secrets
 .env
-.env.*
 client/.env
 server/.env
+
+# local DB
+server/config.db
+server/config.db-shm
+server/config.db-wal
+
+# logs
+*.log
+npm-debug.log*

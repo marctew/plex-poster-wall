@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Badges from './Badges.jsx';
-import TmdbBadge from './TmdbBadge.jsx';
-import API from '../lib/api.js';
 
 function formatTitle(item) {
   if (item.type === 'episode' && item.series) {
@@ -15,7 +13,6 @@ function formatTitle(item) {
 
 export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
   const [index, setIndex] = useState(0);
-  const [tmdb, setTmdb] = useState(null);
   const timer = useRef(null);
 
   useEffect(() => {
@@ -25,21 +22,10 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
   }, [items, dwell]);
 
   const current = items[index];
-
-  // Lazy-load TMDB for the current slide
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!cfg?.show_tmdb || !current?.ratingKey) { setTmdb(null); return; }
-      try { const data = await API.getTmdb(current.ratingKey); if (active) setTmdb(data); }
-      catch { if (active) setTmdb(null); }
-    })();
-    return () => { active = false; };
-  }, [current?.ratingKey, cfg?.show_tmdb]);
-
   const posterH = (cfg?.poster_height_vh ?? 90) + 'vh';
   const blurPx = cfg?.backdrop_blur_px ?? 14;
   const backOpacity = cfg?.backdrop_opacity ?? 0.28;
+
   const baseRem = cfg?.title_size === 'lg' ? 1.875 : cfg?.title_size === 'sm' ? 1.25 : 1.5;
   const titleSize = `${baseRem * (cfg?.title_scale ?? 1)}rem`;
   const synopsisSize = `${0.875 * (cfg?.synopsis_scale ?? 1)}rem`;
@@ -84,14 +70,14 @@ export default function PosterCarousel({ items = [], dwell = 3500, cfg }) {
             <div className="font-semibold glow" style={{ fontSize: titleSize }}>
               {formatTitle(current)}
             </div>
+            {current.year && <div className="text-slate-300/80 mt-1">{current.year}</div>}
 
-            {/* Badges row */}
-            {cfg?.show_badges || cfg?.show_tmdb ? (
-              <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
-                {cfg?.show_badges ? <Badges media={current.media} /> : null}
-                {cfg?.show_tmdb ? <TmdbBadge score={tmdb?.vote_average} /> : null}
+            {/* badges */}
+            {cfg?.show_badges && (
+              <div className="mt-2 flex justify-center">
+                <Badges media={current.media} scale={cfg.badges_scale ?? 1} />
               </div>
-            ) : null}
+            )}
 
             {cfg?.show_synopsis ? (
               <div

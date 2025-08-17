@@ -1,30 +1,30 @@
 import React from 'react';
 
-function Chip({ children }) {
-  return (
-    <span
-      className="inline-block px-2 py-1 rounded border text-[11px] leading-none"
-      style={{ borderColor: 'rgba(51,65,85,.8)', background: 'rgba(15,23,42,.65)' }}
-    >
-      {children}
-    </span>
-  );
-}
-
-export default function Badges({ media, className = '' }) {
+export default function Badges({ media, scale = 1 }) {
   if (!media) return null;
-  const chips = [];
 
-  if (media.resolution) chips.push(<Chip key="res">{media.resolution === '2160p' ? '4K' : media.resolution.replace('p','')}</Chip>);
-  if (media.audioChannels) chips.push(<Chip key="ch">{media.audioChannels}</Chip>);
+  const pills = [
+    media.resolution,
+    media.audioChannels,
+    media.videoCodec,
+    media.audioCodec,
+    media.hdr,
+  ].filter(Boolean);
 
-  if (media.videoCodec) {
-    const vc = String(media.videoCodec).toUpperCase().replace('H265','HEVC').replace('X265','HEVC').replace('H264','AVC');
-    chips.push(<Chip key="vcodec">{vc}</Chip>);
-  }
-  if (media.audioCodec) chips.push(<Chip key="acodec">{String(media.audioCodec).toUpperCase()}</Chip>);
-  if (media.hdr) chips.push(<Chip key="hdr">{media.hdr}</Chip>);
+  if (!pills.length) return null;
 
-  if (!chips.length) return null;
-  return <div className={`flex items-center gap-2 flex-wrap justify-center ${className}`}>{chips}</div>;
+  // Base 11px, scale 0.5x–5x (i.e., 5.5px–55px)
+  const s = Math.max(0.5, Math.min(5, Number(scale || 1)));
+  const fontSizePx = 11 * s;
+
+  return (
+    <div
+      className="badges flex items-center justify-center flex-wrap gap-2"
+      style={{ fontSize: `${fontSizePx}px`, lineHeight: 1 }}
+    >
+      {pills.map((p, i) => (
+        <span key={i} className="badge-pill">{p}</span>
+      ))}
+    </div>
+  );
 }

@@ -6,14 +6,14 @@ function withToken(url, token){ return `${url}${url.includes('?')?'&':'?'}X-Plex
 
 async function fetchPlex({ baseUrl, token, path, searchParams = {} }) {
   const url = new URL(path, baseUrl);
-  Object.entries(searchParams).forEach(([k,v]) => url.searchParams.set(k,String(v)));
+  Object.entries(searchParams).forEach(([k,v]) => url.searchParams.set(k, String(v)));
   const res = await fetch(withToken(url.toString(), token), {
     headers: {
       Accept: 'application/json, text/xml;q=0.9, application/xml;q=0.8',
       'X-Plex-Product':'PlexPosterWall','X-Plex-Version':'1.0','X-Plex-Client-Identifier':'plex-poster-wall',
     }
   });
-  if (!res.ok){ const t = await res.text(); throw new Error(`Plex ${res.status}: ${t}`); }
+  if (!res.ok) throw new Error(`Plex ${res.status}: ${await res.text()}`);
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) return res.json();
   return parser.parse(await res.text());
@@ -71,7 +71,7 @@ export async function getRecentlyAdded({ baseUrl, token, sectionKey, limit = 40 
     seasonNumber: m.parentIndex != null ? Number(m.parentIndex) : null,
     episodeNumber: m.index != null ? Number(m.index) : null,
     episodeTitle: m.type === 'episode' ? (m.title || '') : null,
-    media: summarizeMedia(m), // for carousel badges
+    media: summarizeMedia(m),
   }));
 }
 
@@ -98,7 +98,7 @@ export async function getSessions({ baseUrl, token }) {
       user: { id: user.id ? String(user.id) : undefined, title: user.title },
       player: { title: player.title, product: player.product, platform: player.platform, machineIdentifier: player.machineIdentifier, state: player.state },
       progress, duration, state,
-      media: summarizeMedia(v), // for now-playing badges
+      media: summarizeMedia(v),
     };
   });
 }
